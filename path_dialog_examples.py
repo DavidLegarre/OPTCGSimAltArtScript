@@ -3,6 +3,7 @@
 Simple examples of Windows-style path input dialogs using tkinter.
 Run with: python .\path_dialog_examples.py
 """
+
 import tkinter as tk
 from tkinter import filedialog, simpledialog
 
@@ -60,7 +61,9 @@ def ask_text_input(prompt="Enter path or text:"):
 
 def main():
     print("Choose an action:")
-    print("1) Open file  2) Open files  3) Choose folder  4) Save file  5) Enter path string")
+    print(
+        "1) Open file  2) Open files  3) Choose folder  4) Save file  5) Enter path string"
+    )
     choice = input("Enter 1-5: ").strip()
     if choice == "1":
         print("Selected:", choose_file())
