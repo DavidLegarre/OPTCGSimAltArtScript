@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil
 import logging
+import re
 
 try:
     from loguru import logger
@@ -14,10 +15,82 @@ try:
 except Exception:
     tqdm = None
 
+# Optional Pillow support for recompressing images before copying
+try:
+    from PIL import Image
+
+    PIL_AVAILABLE = True
+except Exception:
+    Image = None
+    PIL_AVAILABLE = False
+
+logger.info(f"Pillow available: {PIL_AVAILABLE}")
+
+
+def _recompress_image(
+    path: Path, jpg_quality: int = 80, png_compress_level: int = 9
+) -> None:
+    """Recompress an image in-place to reduce file size.
+
+    - JPEG: re-save with `quality=jpg_quality` and `optimize=True`.
+    - PNG: re-save with `optimize=True` and `compress_level=png_compress_level`.
+
+    If Pillow is not available, this is a no-op.
+    """
+    if not PIL_AVAILABLE:
+        return
+
+    p = Path(path)
+    try:
+        with Image.open(p) as im:
+            fmt = (im.format or "").upper()
+            # Prefer suffix check as some images might have format None
+            suffix = p.suffix.lower()
+            if fmt == "JPEG" or suffix in (".jpg", ".jpeg"):
+                # JPEG must be saved in RGB
+                if im.mode in ("RGBA", "LA") or (
+                    im.mode == "P" and "transparency" in im.info
+                ):
+                    im = im.convert("RGB")
+                im.save(p, format="JPEG", quality=jpg_quality, optimize=True)
+            elif fmt == "PNG" or suffix == ".png":
+                # Save optimized PNG
+                im.save(
+                    p, format="PNG", optimize=True, compress_level=png_compress_level
+                )
+            else:
+                # Unknown/unsupported format; do nothing
+                return
+    except Exception:
+        # Let caller handle logging
+        raise
+
+
 ALT_CARDS_DIR_NAME = "data_arts"
+LAST_DIR_FILE = Path(__file__).parent / ".last_card_dir"
 
 
-def replace_alt_cards(card_image_path: Path):
+def _save_last_dir(path: Path) -> None:
+    try:
+        LAST_DIR_FILE.write_text(str(Path(path).resolve()))
+    except Exception:
+        logger.exception(f"Failed to save last directory to {LAST_DIR_FILE}")
+
+
+def _load_last_dir() -> Path | None:
+    try:
+        if LAST_DIR_FILE.exists():
+            text = LAST_DIR_FILE.read_text().strip()
+            if text:
+                p = Path(text)
+                if p.exists() and p.is_dir():
+                    return p
+    except Exception:
+        logger.exception(f"Failed to load last directory from {LAST_DIR_FILE}")
+    return None
+
+
+def replace_alt_cards(card_image_path: Path | str | None):
     """
     Replace card images in card_image_path with images from alt_cards_path
     if they exist.
@@ -27,6 +100,22 @@ def replace_alt_cards(card_image_path: Path):
 
     :param card_image_path: Path to the directory containing original card images.
     """
+    # Allow None to use the previously saved directory
+    if card_image_path is None:
+        last = _load_last_dir()
+        if last is None:
+            logger.error(
+                "No card_image_path provided and no saved last directory found."
+            )
+            return
+        card_image_path = last
+        logger.info(f"Using saved last directory: {card_image_path}")
+    else:
+        card_image_path = Path(card_image_path)
+
+        # Note: we do NOT persist the provided `card_image_path` here because
+        # callers (e.g. `main.py`) should save the game root (not the Cards subpath).
+
     logger.info(
         f"Starting replacement of alt card images in {card_image_path.resolve()}..."
     )
@@ -55,12 +144,24 @@ def replace_alt_cards(card_image_path: Path):
         logger.info(f"Processing alt image: {alt_image}")
 
         # Compute candidate bases from the alt image stem.
-        # Example: "OP02-068(PRB02)" -> bases: ["OP02-068(PRB02)", "OP02-068"]
+        # Examples:
+        # - "OP02-068(PRB02)" -> bases: ["OP02-068(PRB02)", "OP02-068"]
+        # - "OP09-051Manga alt" -> bases: ["OP09-051Manga alt", "OP09-051"]
         stem = alt_image.stem
-        bases = [stem]
+        bases = []
+        # keep full stem first
+        bases.append(stem)
+        # extract card code like OP09-051, ST12-345, EB01-002 anywhere in the stem
+        m = re.search(r"(?i)\b(?:OP|ST|EB)\d{2}-\d{3}\b", stem)
+        if m:
+            code = m.group(0).upper()
+            if code not in bases:
+                bases.append(code)
+        # also handle names with parentheses: take content before '('
         if "(" in stem:
             base = stem.split("(", 1)[0].rstrip()
-            bases.append(base)
+            if base not in bases:
+                bases.append(base)
 
         # Build list of existing candidate targets to replace (search recursively in subdirs)
         targets = []
@@ -101,6 +202,14 @@ def replace_alt_cards(card_image_path: Path):
                 logger.exception(f"Failed to copy {alt_image} -> {first_target}")
                 continue
             source_for_copies = first_target
+
+        # Recompress the source image (in-place) to reduce file size if Pillow is available
+        if PIL_AVAILABLE:
+            try:
+                _recompress_image(source_for_copies)
+                logger.info(f"Recompressed {source_for_copies} before duplicating")
+            except Exception:
+                logger.exception(f"Failed to recompress {source_for_copies}")
 
         for other in targets[1:]:
             try:
