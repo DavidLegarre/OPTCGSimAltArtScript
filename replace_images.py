@@ -35,6 +35,7 @@ LAST_DIR_FILE = Path(__file__).parent / ".last_card_dir"
 ALLOWED_EXTENSIONS = (".png", ".jpg", ".jpeg")
 CARD_CODE_PATTERN = re.compile(r"(?i)(?:OP|ST|EB)\d{2}-\d{3}")
 PNG_COMPRESS_LEVEL = 9
+MAX_IMAGE_DIMENSION = 1024
 
 
 @dataclass
@@ -80,27 +81,59 @@ class ImageConverter:
     """Handles image format conversion and optimization."""
     
     @staticmethod
-    def convert_to_rgb(image: Image.Image) -> Image.Image:
-        """Convert image to RGB mode, handling transparency with white background."""
-        if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
-            background = Image.new("RGB", image.size, (255, 255, 255))
+    def normalize_image_mode(image: Image.Image) -> Image.Image:
+        """Normalize image mode, preserving transparency when present.
+        
+        Converts to RGBA for images with transparency, RGB otherwise.
+        """
+        # Check if image has transparency
+        has_transparency = (
+            image.mode in ("RGBA", "LA") or 
+            (image.mode == "P" and "transparency" in image.info)
+        )
+        
+        if has_transparency:
+            # Preserve transparency by converting to RGBA
             if image.mode == "P":
-                image = image.convert("RGBA")
-            background.paste(image, mask=image.split()[-1] if image.mode in ("RGBA", "LA") else None)
-            return background
-        elif image.mode != "RGB":
-            return image.convert("RGB")
-        return image
+                return image.convert("RGBA")
+            elif image.mode == "LA":
+                return image.convert("RGBA")
+            # Already RGBA, return as-is
+            return image
+        else:
+            # No transparency, convert to RGB
+            if image.mode != "RGB":
+                return image.convert("RGB")
+            return image
+
+    @staticmethod
+    def resize_image(image: Image.Image) -> Image.Image:
+        """Resize image if it exceeds maximum dimensions, maintaining aspect ratio."""
+        width, height = image.size
+        if width <= MAX_IMAGE_DIMENSION and height <= MAX_IMAGE_DIMENSION:
+            return image
+            
+        # Calculate new dimensions
+        if width > height:
+            new_width = MAX_IMAGE_DIMENSION
+            new_height = int(height * (MAX_IMAGE_DIMENSION / width))
+        else:
+            new_height = MAX_IMAGE_DIMENSION
+            new_width = int(width * (MAX_IMAGE_DIMENSION / height))
+            
+        logger.info(f"Resizing image from {width}x{height} to {new_width}x{new_height}")
+        return image.resize((new_width, new_height), Image.Resampling.LANCZOS)
     
     @staticmethod
     def save_as_png(source_path: Path, target_path: Path) -> None:
-        """Load an image and save it as optimized PNG."""
+        """Load an image and save it as optimized PNG, preserving transparency."""
         if not PIL_AVAILABLE:
             raise RuntimeError("Pillow is not available for image conversion")
         
         with Image.open(source_path) as img:
-            rgb_image = ImageConverter.convert_to_rgb(img)
-            rgb_image.save(target_path, format="PNG", optimize=True, compress_level=PNG_COMPRESS_LEVEL)
+            normalized_image = ImageConverter.normalize_image_mode(img)
+            resized_image = ImageConverter.resize_image(normalized_image)
+            resized_image.save(target_path, format="PNG", optimize=True, compress_level=PNG_COMPRESS_LEVEL)
 
 
 class TargetFinder:

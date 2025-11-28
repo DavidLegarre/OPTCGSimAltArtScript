@@ -4,6 +4,7 @@ from path_dialog_examples import choose_directory
 from replace_images import replace_alt_cards, _load_last_dir, _save_last_dir
 
 # If a saved last directory exists, use it directly; otherwise prompt the user.
+print("Selecciona el directorio base de la instalación de OPTCGSim:")
 last = _load_last_dir()
 if last is not None:
     main_game_path = Path(last)
