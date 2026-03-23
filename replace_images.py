@@ -35,7 +35,7 @@ LAST_DIR_FILE = Path(__file__).parent / ".last_card_dir"
 ALLOWED_EXTENSIONS = (".png", ".jpg", ".jpeg")
 CARD_CODE_PATTERN = re.compile(r"(?i)(?:OP|ST|EB)\d{2}-\d{3}")
 PNG_COMPRESS_LEVEL = 9
-MAX_IMAGE_DIMENSION = 1024
+MAX_IMAGE_DIMENSION = 680
 
 
 @dataclass
